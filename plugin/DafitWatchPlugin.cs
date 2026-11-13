@@ -5,9 +5,9 @@ using System.Windows.Media;
 
 namespace User.DafitWatch
 {
-    [PluginDescription("Rythme cardiaque en direct depuis une montre Da Fit (Bluetooth LE)")]
+    [PluginDescription("Rythme cardiaque en direct depuis une montre connectée Da Fit (Bluetooth LE)")]
     [PluginAuthor("Amaury")]
-    [PluginName("Montre Da Fit")]
+    [PluginName("Smartwatch BPM")]
     public class DafitWatchPlugin : IPlugin, IDataPlugin, IWPFSettingsV2
     {
         internal DafitWatchSettings Settings;
@@ -19,8 +19,8 @@ namespace User.DafitWatch
         long _sumHr, _countHr;
 
         public PluginManager PluginManager { get; set; }
-        public ImageSource   PictureIcon   { get { return null; } }
-        public string        LeftMenuTitle { get { return "Montre Da Fit"; } }
+        public ImageSource   PictureIcon   { get { return PluginIcon.Image; } }
+        public string        LeftMenuTitle { get { return "Smartwatch BPM"; } }
 
         public void Init(PluginManager pluginManager)
         {

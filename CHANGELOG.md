@@ -1,5 +1,10 @@
 # Changelog
 
+## v1.1.0
+
+- Le plugin s'appelle désormais **Smartwatch BPM** dans SimHub (les propriétés gardent le préfixe `DafitWatchPlugin.`, rien à changer dans les dashboards).
+- Nouvelle icône dans le menu de gauche : une montre connectée avec un cœur.
+
 ## v1.0.0
 
 Première version.

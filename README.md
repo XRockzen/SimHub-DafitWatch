@@ -1,4 +1,4 @@
-# Montre Da Fit → SimHub
+# Smartwatch BPM — montre Da Fit → SimHub
 
 Plugin SimHub qui lit le rythme cardiaque d'une montre **Da Fit** (protocole MoYoung) en Bluetooth LE
 et l'expose comme une vraie source de données SimHub (overlays, Dash Studio, autres plugins).
@@ -16,7 +16,7 @@ et la copier dans le dossier de SimHub (SimHub fermé). Ou depuis les sources :
 .\plugin\build.ps1 -Deploy     # SimHub fermé
 ```
 
-Au premier lancement, SimHub demande d'activer le plugin « Montre Da Fit ».
+Au premier lancement, SimHub demande d'activer le plugin « Smartwatch BPM ».
 
 ## Mises à jour
 

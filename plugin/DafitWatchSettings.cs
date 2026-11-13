@@ -2,7 +2,7 @@ namespace User.DafitWatch
 {
     public class DafitWatchSettings
     {
-        /// <summary>Adresse Bluetooth (ex. 88:E5:2C:00:E6:5B). Vide = recherche par nom.</summary>
+        /// <summary>Adresse Bluetooth (ex. AA:BB:CC:DD:EE:FF). Vide = recherche par nom.</summary>
         public string DeviceAddress { get; set; }
 
         /// <summary>Nom Bluetooth annoncé par la montre (utilisé si l'adresse est vide).</summary>

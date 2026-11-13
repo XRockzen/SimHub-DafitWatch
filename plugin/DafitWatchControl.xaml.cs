@@ -66,7 +66,7 @@ namespace User.DafitWatch
             ulong dummy;
             if (address.Length > 0 && !WatchClient.TryParseAddress(address, out dummy))
             {
-                TxtError.Text = "Adresse invalide (format attendu : 88:E5:2C:00:E6:5B).";
+                TxtError.Text = "Adresse invalide (format attendu : AA:BB:CC:DD:EE:FF).";
                 return false;
             }
             int maxHr, stale;

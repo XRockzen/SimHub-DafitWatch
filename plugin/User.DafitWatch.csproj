@@ -1,0 +1,100 @@
+<?xml version="1.0" encoding="utf-8"?>
+<Project ToolsVersion="14.0" DefaultTargets="Build" xmlns="http://schemas.microsoft.com/developer/msbuild/2003">
+  <Import Project="$(MSBuildExtensionsPath)\$(MSBuildToolsVersion)\Microsoft.Common.props"
+          Condition="Exists('$(MSBuildExtensionsPath)\$(MSBuildToolsVersion)\Microsoft.Common.props')" />
+  <PropertyGroup>
+    <Configuration Condition=" '$(Configuration)' == '' ">Debug</Configuration>
+    <Platform Condition=" '$(Platform)' == '' ">AnyCPU</Platform>
+    <ProjectGuid>{7A3C1E52-9D4B-4F86-A1C0-5B2E8D6F4A19}</ProjectGuid>
+    <OutputType>Library</OutputType>
+    <RootNamespace>User.DafitWatch</RootNamespace>
+    <AssemblyName>User.DafitWatch</AssemblyName>
+    <TargetFrameworkVersion>v4.8</TargetFrameworkVersion>
+    <FileAlignment>512</FileAlignment>
+    <!-- Sources en UTF-8 sans BOM : sinon csc lit les accents avec la page de code Windows -->
+    <CodePage>65001</CodePage>
+    <!-- Métadonnées WinRT livrées avec Windows 10/11 (API Bluetooth LE), pas besoin du SDK Windows -->
+    <WinMetadataDir>$(SystemRoot)\System32\WinMetadata\</WinMetadataDir>
+    <FrameworkDir64>$(SystemRoot)\Microsoft.NET\Framework64\v4.0.30319\</FrameworkDir64>
+  </PropertyGroup>
+  <PropertyGroup Condition=" '$(Configuration)|$(Platform)' == 'Release|AnyCPU' ">
+    <DebugType>pdbonly</DebugType>
+    <Optimize>true</Optimize>
+    <OutputPath>bin\Release\</OutputPath>
+    <DefineConstants>TRACE</DefineConstants>
+    <ErrorReport>prompt</ErrorReport>
+    <WarningLevel>4</WarningLevel>
+  </PropertyGroup>
+  <PropertyGroup Condition=" '$(Configuration)|$(Platform)' == 'Debug|AnyCPU' ">
+    <DebugSymbols>true</DebugSymbols>
+    <DebugType>full</DebugType>
+    <OutputPath>bin\Debug\</OutputPath>
+    <DefineConstants>DEBUG;TRACE</DefineConstants>
+  </PropertyGroup>
+  <ItemGroup>
+    <Reference Include="GameReaderCommon">
+      <HintPath>$(SIMHUB_INSTALL_PATH)GameReaderCommon.dll</HintPath>
+      <Private>False</Private>
+    </Reference>
+    <Reference Include="SimHub.Logging">
+      <HintPath>$(SIMHUB_INSTALL_PATH)SimHub.Logging.dll</HintPath>
+      <Private>False</Private>
+    </Reference>
+    <Reference Include="SimHub.Plugins">
+      <HintPath>$(SIMHUB_INSTALL_PATH)SimHub.Plugins.dll</HintPath>
+      <Private>False</Private>
+    </Reference>
+    <Reference Include="log4net">
+      <HintPath>$(SIMHUB_INSTALL_PATH)log4net.dll</HintPath>
+      <Private>False</Private>
+    </Reference>
+    <Reference Include="Windows.Devices">
+      <HintPath>$(WinMetadataDir)Windows.Devices.winmd</HintPath>
+      <Private>False</Private>
+    </Reference>
+    <Reference Include="Windows.Foundation">
+      <HintPath>$(WinMetadataDir)Windows.Foundation.winmd</HintPath>
+      <Private>False</Private>
+    </Reference>
+    <Reference Include="Windows.Storage">
+      <HintPath>$(WinMetadataDir)Windows.Storage.winmd</HintPath>
+      <Private>False</Private>
+    </Reference>
+    <Reference Include="System.Runtime">
+      <HintPath>$(FrameworkDir64)System.Runtime.dll</HintPath>
+      <Private>False</Private>
+    </Reference>
+    <Reference Include="System.Threading.Tasks">
+      <HintPath>$(FrameworkDir64)System.Threading.Tasks.dll</HintPath>
+      <Private>False</Private>
+    </Reference>
+    <Reference Include="System.Runtime.InteropServices.WindowsRuntime">
+      <HintPath>$(FrameworkDir64)System.Runtime.InteropServices.WindowsRuntime.dll</HintPath>
+      <Private>False</Private>
+    </Reference>
+    <Reference Include="PresentationCore" />
+    <Reference Include="PresentationFramework" />
+    <Reference Include="System" />
+    <Reference Include="System.Core" />
+    <Reference Include="System.Xaml" />
+    <Reference Include="Microsoft.CSharp" />
+    <Reference Include="WindowsBase" />
+  </ItemGroup>
+  <ItemGroup>
+    <Compile Include="DafitWatchControl.xaml.cs">
+      <DependentUpon>DafitWatchControl.xaml</DependentUpon>
+    </Compile>
+    <Compile Include="DafitWatchPlugin.cs" />
+    <Compile Include="DafitWatchSettings.cs" />
+    <Compile Include="WatchClient.cs" />
+    <Compile Include="WinRtInterop.cs" />
+    <Compile Include="Properties\AssemblyInfo.cs" />
+  </ItemGroup>
+  <ItemGroup>
+    <Page Include="DafitWatchControl.xaml">
+      <SubType>Designer</SubType>
+      <Generator>MSBuild:Compile</Generator>
+    </Page>
+  </ItemGroup>
+  <Import Project="$(MSBuildToolsPath)\Microsoft.CSharp.targets" />
+</Project>

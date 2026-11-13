@@ -9,11 +9,27 @@ ce qui la fait diffuser son cardio sur le service Bluetooth standard Heart Rate 
 
 ## Installation
 
+Télécharger `User.DafitWatch.dll` depuis la [dernière release](https://github.com/XRockzen/SimHub-DafitWatch/releases/latest)
+et la copier dans le dossier de SimHub (SimHub fermé). Ou depuis les sources :
+
 ```powershell
 .\plugin\build.ps1 -Deploy     # SimHub fermé
 ```
 
 Au premier lancement, SimHub demande d'activer le plugin « Montre Da Fit ».
+
+## Mises à jour
+
+À chaque démarrage de SimHub, le plugin compare sa version à la dernière release GitHub.
+S'il y a plus récent, un bandeau apparaît dans son onglet : « Installer » télécharge la DLL,
+vérifie son empreinte SHA-256, remplace l'ancienne (demande admin si SimHub est dans Program Files),
+puis il suffit de redémarrer SimHub.
+
+Publier une version (compile, tag, push et release avec DLL + `.sha256`) :
+
+```powershell
+.\release.ps1 -Version 1.1.0 -Notes "- Ajout de ..."
+```
 Avant de connecter : fermer l'app Da Fit / couper le Bluetooth du téléphone (la montre n'accepte qu'une connexion).
 
 ## Propriétés (`DafitWatchPlugin.*`)

@@ -41,8 +41,65 @@ namespace User.DafitWatch
                 LoadSettings();
                 RefreshStatus();
                 _timer.Start();
+                TxtVersion.Text = "Version " + PluginUpdater.Format(PluginUpdater.CurrentVersion);
+                PluginUpdater.Changed -= OnUpdateChanged;
+                PluginUpdater.Changed += OnUpdateChanged;
+                RefreshUpdateBanner();
             };
-            Unloaded += (s, e) => _timer.Stop();
+            Unloaded += (s, e) =>
+            {
+                _timer.Stop();
+                PluginUpdater.Changed -= OnUpdateChanged;
+            };
+        }
+
+        // ------------------------------------------------------------------ mise à jour
+
+        void OnUpdateChanged()
+        {
+            Dispatcher.BeginInvoke(new Action(RefreshUpdateBanner));
+        }
+
+        void RefreshUpdateBanner()
+        {
+            if (PluginUpdater.PendingRestartVersion != null)
+            {
+                TxtUpdate.Text = "✓ Version " + PluginUpdater.Format(PluginUpdater.PendingRestartVersion)
+                    + " installée : redémarre SimHub pour l'utiliser.";
+                UpdateButtons.Visibility = Visibility.Collapsed;
+                UpdateBanner.Visibility = Visibility.Visible;
+                return;
+            }
+
+            var info = PluginUpdater.Available;
+            if (info == null || PluginUpdater.Dismissed)
+            {
+                UpdateBanner.Visibility = Visibility.Collapsed;
+                return;
+            }
+
+            TxtUpdate.Text = "Nouvelle version du plugin : " + PluginUpdater.Format(info.Version)
+                + " (tu as " + PluginUpdater.Format(PluginUpdater.CurrentVersion) + ").";
+            UpdateBanner.ToolTip = string.IsNullOrEmpty(info.Notes) ? null : info.Notes;
+            UpdateButtons.Visibility = Visibility.Visible;
+            UpdateBanner.Visibility = Visibility.Visible;
+        }
+
+        void BtnUpdateInstall_Click(object sender, RoutedEventArgs e)
+        {
+            BtnUpdateInstall.IsEnabled = false;
+            TxtUpdate.Text = "Installation en cours…";
+            PluginUpdater.InstallInBackground(error => Dispatcher.BeginInvoke(new Action(() =>
+            {
+                BtnUpdateInstall.IsEnabled = true;
+                if (error != null) TxtUpdate.Text = "Échec de la mise à jour : " + error;
+            })));
+        }
+
+        void BtnUpdateLater_Click(object sender, RoutedEventArgs e)
+        {
+            PluginUpdater.Dismissed = true;
+            RefreshUpdateBanner();
         }
 
         void LoadSettings()

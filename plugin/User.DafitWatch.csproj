@@ -44,6 +44,10 @@
       <HintPath>$(SIMHUB_INSTALL_PATH)SimHub.Plugins.dll</HintPath>
       <Private>False</Private>
     </Reference>
+    <Reference Include="Newtonsoft.Json">
+      <HintPath>$(SIMHUB_INSTALL_PATH)Newtonsoft.Json.dll</HintPath>
+      <Private>False</Private>
+    </Reference>
     <Reference Include="log4net">
       <HintPath>$(SIMHUB_INSTALL_PATH)log4net.dll</HintPath>
       <Private>False</Private>
@@ -76,6 +80,7 @@
     <Reference Include="PresentationFramework" />
     <Reference Include="System" />
     <Reference Include="System.Core" />
+    <Reference Include="System.Net" />
     <Reference Include="System.Xaml" />
     <Reference Include="Microsoft.CSharp" />
     <Reference Include="WindowsBase" />
@@ -86,6 +91,7 @@
     </Compile>
     <Compile Include="DafitWatchPlugin.cs" />
     <Compile Include="DafitWatchSettings.cs" />
+    <Compile Include="PluginUpdater.cs" />
     <Compile Include="WatchClient.cs" />
     <Compile Include="WinRtInterop.cs" />
     <Compile Include="Properties\AssemblyInfo.cs" />

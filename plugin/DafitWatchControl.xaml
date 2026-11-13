@@ -40,8 +40,28 @@
             <ColumnDefinition Width="300"/>
         </Grid.ColumnDefinitions>
 
+        <Grid.RowDefinitions>
+            <RowDefinition Height="Auto"/>
+            <RowDefinition Height="*"/>
+        </Grid.RowDefinitions>
+
+        <!-- ═══ HAUT : mise à jour ═══ -->
+        <Border x:Name="UpdateBanner" Grid.Row="0" Grid.ColumnSpan="2" Visibility="Collapsed"
+                Background="#332196F3" BorderBrush="#662196F3" BorderThickness="1"
+                CornerRadius="4" Padding="10,6" Margin="0,0,0,8">
+            <DockPanel>
+                <StackPanel x:Name="UpdateButtons" DockPanel.Dock="Right" Orientation="Horizontal">
+                    <Button x:Name="BtnUpdateInstall" Content="Installer" Padding="10,2" Margin="8,0,0,0"
+                            Click="BtnUpdateInstall_Click"/>
+                    <Button x:Name="BtnUpdateLater" Content="Plus tard" Padding="10,2" Margin="4,0,0,0"
+                            Click="BtnUpdateLater_Click"/>
+                </StackPanel>
+                <TextBlock x:Name="TxtUpdate" TextWrapping="Wrap" VerticalAlignment="Center"/>
+            </DockPanel>
+        </Border>
+
         <!-- ═══ GAUCHE : statut + configuration ═══ -->
-        <StackPanel Grid.Column="0" Margin="0,0,16,0">
+        <StackPanel Grid.Row="1" Grid.Column="0" Margin="0,0,16,0">
 
             <!-- Statut en direct -->
             <Border Background="#11FFFFFF" BorderBrush="#22FFFFFF" BorderThickness="1"
@@ -124,7 +144,8 @@
         </StackPanel>
 
         <!-- ═══ DROITE : propriétés exposées ═══ -->
-        <StackPanel Grid.Column="1">
+        <StackPanel Grid.Row="1" Grid.Column="1">
+            <TextBlock x:Name="TxtVersion" Opacity="0.4" FontSize="10" Margin="0,0,0,6"/>
             <TextBlock Text="PROPRIÉTÉS SIMHUB" Style="{StaticResource Lbl}" Margin="0,0,0,4"/>
             <TextBlock TextWrapping="Wrap" Opacity="0.6" FontSize="11" Margin="0,0,0,8">
                 Préfixe : DafitWatchPlugin.  — utilisables dans Dash Studio, les formules NCalc/JS

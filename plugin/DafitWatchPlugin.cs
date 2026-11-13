@@ -24,7 +24,12 @@ namespace User.DafitWatch
 
         public void Init(PluginManager pluginManager)
         {
-            SimHub.Logging.Current.Info("[DafitWatch] Starting");
+            SimHub.Logging.Current.Info("[DafitWatch] Starting " + PluginUpdater.Format(PluginUpdater.CurrentVersion));
+
+            // Compare la version installée à la dernière release GitHub
+            PluginUpdater.CleanupPrevious();
+            PluginUpdater.CheckInBackground();
+
             Settings = this.ReadCommonSettings<DafitWatchSettings>("GeneralSettings", () => new DafitWatchSettings());
 
             Client.HeartRateReceived += OnHeartRate;

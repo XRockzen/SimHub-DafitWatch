@@ -94,6 +94,8 @@
     <Compile Include="PluginIcon.cs" />
     <Compile Include="PluginUpdater.cs" />
     <Compile Include="WatchClient.cs" />
+    <Compile Include="WatchProfiles.cs" />
+    <Compile Include="BluetoothTools.cs" />
     <Compile Include="WinRtInterop.cs" />
     <Compile Include="Properties\AssemblyInfo.cs" />
   </ItemGroup>

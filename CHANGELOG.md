@@ -1,5 +1,14 @@
 # Changelog
 
+## v1.2.0
+
+- Connexion bien plus fiable : connexion directe à l'adresse de la montre (plus besoin qu'elle soit « visible »), détection immédiate des coupures et reconnexion en moins d'une seconde, délai maximal sur chaque opération Bluetooth.
+- Autres montres : profil « Cardio Bluetooth standard » pour tout appareil qui diffuse son cardio (ceintures, Garmin, Polar, Coros, Amazfit, Huawei… en mode diffusion), profil Da Fit détecté automatiquement.
+- « Lister mes appareils » : appareils appairés à Windows puis ceux à proximité (♥ = cardio annoncé).
+- Bouton « Diagnostic » : copie un rapport des services Bluetooth de la montre, à envoyer pour ajouter un nouveau modèle.
+- Da Fit : si un sport tourne déjà sur la montre, le plugin n'y touche pas, et ne l'arrête à la fermeture que s'il l'a lui-même lancé.
+- Nouvelles propriétés `Profile` et `Reconnects`.
+
 ## v1.1.0
 
 - Le plugin s'appelle désormais **Smartwatch BPM** dans SimHub (les propriétés gardent le préfixe `DafitWatchPlugin.`, rien à changer dans les dashboards).

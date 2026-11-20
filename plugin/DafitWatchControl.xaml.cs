@@ -26,12 +26,24 @@ namespace User.DafitWatch
             new KeyValuePair<int, string>(0,  "Marche (0)"),
         };
 
+        static List<KeyValuePair<string, string>> Profiles()
+        {
+            var list = new List<KeyValuePair<string, string>>
+            {
+                new KeyValuePair<string, string>(WatchProfiles.AutoId, "Détection automatique"),
+            };
+            foreach (var p in WatchProfiles.All)
+                list.Add(new KeyValuePair<string, string>(p.Id, p.DisplayName));
+            return list;
+        }
+
         public DafitWatchControl(DafitWatchPlugin plugin)
         {
             InitializeComponent();
             _plugin = plugin;
 
             CmbSport.ItemsSource = Sports;
+            CmbProfile.ItemsSource = Profiles();
 
             _timer = new DispatcherTimer { Interval = TimeSpan.FromMilliseconds(500) };
             _timer.Tick += (s, e) => RefreshStatus();
@@ -110,6 +122,8 @@ namespace User.DafitWatch
             if (!Sports.Any(p => p.Key == st.SportType))
                 Sports.Add(new KeyValuePair<int, string>(st.SportType, "Code " + st.SportType));
             CmbSport.SelectedValue = st.SportType;
+            CmbProfile.SelectedValue = string.IsNullOrEmpty(st.Profile) ? WatchProfiles.AutoId : st.Profile;
+            if (CmbProfile.SelectedValue == null) CmbProfile.SelectedValue = WatchProfiles.AutoId;
             ChkStopOnExit.IsChecked = st.StopSportOnExit;
             ChkAutoConnect.IsChecked = st.AutoConnect;
             TxtMaxHr.Text = st.UserMaxHeartRate.ToString();
@@ -121,7 +135,7 @@ namespace User.DafitWatch
             TxtError.Text = "";
             var address = TxtAddress.Text.Trim();
             ulong dummy;
-            if (address.Length > 0 && !WatchClient.TryParseAddress(address, out dummy))
+            if (address.Length > 0 && !BluetoothTools.TryParseAddress(address, out dummy))
             {
                 TxtError.Text = "Adresse invalide (format attendu : AA:BB:CC:DD:EE:FF).";
                 return false;
@@ -142,6 +156,7 @@ namespace User.DafitWatch
             st.DeviceAddress = address;
             st.DeviceName = TxtName.Text.Trim();
             if (CmbSport.SelectedValue is int) st.SportType = (int)CmbSport.SelectedValue;
+            st.Profile = (CmbProfile.SelectedValue as string) ?? WatchProfiles.AutoId;
             st.StopSportOnExit = ChkStopOnExit.IsChecked == true;
             st.AutoConnect = ChkAutoConnect.IsChecked == true;
             st.UserMaxHeartRate = maxHr;
@@ -171,8 +186,10 @@ namespace User.DafitWatch
 
             var device = c.DeviceName;
             TxtDevice.Text = string.IsNullOrEmpty(device) ? "" :
-                string.Format("{0}  {1}  ·  batterie {2}", device, c.DeviceAddress,
-                              c.Battery >= 0 ? c.Battery + " %" : "?");
+                string.Format("{0}  {1}  ·  {2}  ·  batterie {3}{4}", device, c.DeviceAddress,
+                              string.IsNullOrEmpty(c.ProfileName) ? "?" : c.ProfileName,
+                              c.Battery >= 0 ? c.Battery + " %" : "?",
+                              c.Reconnects > 0 ? "  ·  " + c.Reconnects + " reconnexion(s)" : "");
 
             int min, avg, max;
             _plugin.GetStats(out min, out avg, out max);
@@ -203,32 +220,67 @@ namespace User.DafitWatch
             if (_scanning) return;
             _scanning = true;
             BtnScan.IsEnabled = false;
-            TxtScan.Text = "  recherche pendant 8 s…";
+            BtnDiag.IsEnabled = false;
+            TxtScan.Text = "  appareils appairés + recherche 8 s…";
             try
             {
-                var results = await WatchClient.Scan(8000, CancellationToken.None, null);
-                // Les appareils nommés d'abord : la montre annonce son nom
-                ListScan.ItemsSource = results.OrderBy(r => string.IsNullOrEmpty(r.Name)).ThenByDescending(r => r.Rssi).ToList();
+                var results = await BluetoothTools.ListDevices(8000, CancellationToken.None);
+                ListScan.ItemsSource = results;
                 ListScan.Visibility = Visibility.Visible;
-                TxtScan.Text = string.Format("  {0} appareil(s) — clique sur la montre", results.Count);
+                TxtScan.Text = string.Format("  {0} appareil(s) — clique sur ta montre", results.Count);
             }
             catch (Exception ex)
             {
-                TxtScan.Text = "  erreur : " + ex.Message;
+                TxtScan.Text = "  erreur : " + WinRtInterop.Describe(ex);
             }
             finally
             {
                 _scanning = false;
                 BtnScan.IsEnabled = true;
+                BtnDiag.IsEnabled = true;
             }
         }
 
         void ListScan_SelectionChanged(object sender, SelectionChangedEventArgs e)
         {
-            var r = ListScan.SelectedItem as ScanResult;
+            var r = ListScan.SelectedItem as DeviceChoice;
             if (r == null) return;
             TxtAddress.Text = r.AddressText;
-            if (!string.IsNullOrEmpty(r.Name)) TxtName.Text = r.Name;
+            TxtName.Text = r.Name ?? "";
+            TxtScan.Text = "  puis « Enregistrer et (re)connecter »";
+        }
+
+        async void BtnDiag_Click(object sender, RoutedEventArgs e)
+        {
+            ulong address;
+            if (!BluetoothTools.TryParseAddress(TxtAddress.Text, out address))
+            {
+                TxtScan.Text = "  choisis d'abord une montre dans la liste";
+                return;
+            }
+            if (_scanning) return;
+            _scanning = true;
+            BtnScan.IsEnabled = false;
+            BtnDiag.IsEnabled = false;
+            TxtScan.Text = "  lecture des services de la montre…";
+            try
+            {
+                var report = await BluetoothTools.Diagnose(address, CancellationToken.None);
+                TxtDiag.Text = report;
+                TxtDiag.Visibility = Visibility.Visible;
+                try { Clipboard.SetText(report); TxtScan.Text = "  rapport copié dans le presse-papiers"; }
+                catch { TxtScan.Text = "  rapport prêt (copie impossible : sélectionne le texte)"; }
+            }
+            catch (Exception ex)
+            {
+                TxtScan.Text = "  erreur : " + WinRtInterop.Describe(ex);
+            }
+            finally
+            {
+                _scanning = false;
+                BtnScan.IsEnabled = true;
+                BtnDiag.IsEnabled = true;
+            }
         }
     }
 }

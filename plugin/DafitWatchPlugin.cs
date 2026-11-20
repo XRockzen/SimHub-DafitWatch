@@ -31,6 +31,7 @@ namespace User.DafitWatch
             PluginUpdater.CheckInBackground();
 
             Settings = this.ReadCommonSettings<DafitWatchSettings>("GeneralSettings", () => new DafitWatchSettings());
+            if (string.IsNullOrEmpty(Settings.Profile)) Settings.Profile = WatchProfiles.AutoId;   // réglages d'avant la v1.2
 
             Client.HeartRateReceived += OnHeartRate;
 
@@ -49,6 +50,8 @@ namespace User.DafitWatch
             this.AttachDelegate("StatusText",       () => Client.StatusText);
             this.AttachDelegate("Battery",          () => Client.Battery);
             this.AttachDelegate("DeviceName",       () => Client.DeviceName);
+            this.AttachDelegate("Profile",          () => Client.ProfileName);
+            this.AttachDelegate("Reconnects",       () => Client.Reconnects);
 
             // --- Actions (mappables sur un bouton) ---
             this.AddAction("Reconnect",  (a, b) => Reconnect());

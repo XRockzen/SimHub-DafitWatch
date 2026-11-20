@@ -98,25 +98,36 @@
             <StackPanel Orientation="Horizontal" Margin="0,2">
                 <TextBlock Text="Adresse :" Style="{StaticResource FieldName}"/>
                 <TextBox x:Name="TxtAddress" Width="170"/>
-                <TextBlock Text="  vide = recherche par nom" Opacity="0.4" FontSize="11" VerticalAlignment="Center"/>
+                <TextBlock Text="  rempli en choisissant dans la liste" Opacity="0.4" FontSize="11" VerticalAlignment="Center"/>
             </StackPanel>
             <StackPanel Orientation="Horizontal" Margin="0,4">
                 <TextBlock Text="Nom :" Style="{StaticResource FieldName}"/>
                 <TextBox x:Name="TxtName" Width="170"/>
             </StackPanel>
+            <StackPanel Orientation="Horizontal" Margin="0,4">
+                <TextBlock Text="Type de montre :" Style="{StaticResource FieldName}"/>
+                <ComboBox x:Name="CmbProfile" Width="220" DisplayMemberPath="Value" SelectedValuePath="Key"/>
+            </StackPanel>
             <StackPanel Orientation="Horizontal" Margin="110,6,0,0">
-                <Button x:Name="BtnScan" Content="Rechercher les montres" Click="BtnScan_Click"/>
+                <Button x:Name="BtnScan" Content="Lister mes appareils" Click="BtnScan_Click"/>
+                <Button x:Name="BtnDiag" Content="Diagnostic" Click="BtnDiag_Click"
+                        ToolTip="Liste les services Bluetooth de la montre choisie et copie le rapport dans le presse-papiers (pour ajouter un nouveau modèle)"/>
                 <TextBlock x:Name="TxtScan" Opacity="0.6" FontSize="11" VerticalAlignment="Center"/>
             </StackPanel>
-            <ListBox x:Name="ListScan" Height="110" Margin="110,6,0,0" Visibility="Collapsed"
+            <ListBox x:Name="ListScan" Height="130" Margin="110,6,0,0" Visibility="Collapsed"
                      Background="#0DFFFFFF" Foreground="White" BorderBrush="#33FFFFFF"
-                     FontFamily="Consolas" SelectionChanged="ListScan_SelectionChanged"/>
+                     FontFamily="Consolas" FontSize="11.5" SelectionChanged="ListScan_SelectionChanged"/>
+            <TextBox x:Name="TxtDiag" Height="160" Margin="110,6,0,0" Visibility="Collapsed" IsReadOnly="True"
+                     FontFamily="Consolas" FontSize="11" TextWrapping="NoWrap"
+                     VerticalScrollBarVisibility="Auto" HorizontalScrollBarVisibility="Auto"/>
             <TextBlock TextWrapping="Wrap" Opacity="0.5" FontSize="11" Margin="110,6,0,0">
-                La montre n'accepte qu'une connexion : ferme l'app Da Fit (ou coupe le Bluetooth du téléphone) avant de connecter le PC.
+                La montre n'accepte qu'une liaison données à la fois : coupe l'app de la montre sur le téléphone
+                (ou son Bluetooth), sinon il la reprend dès qu'elle se libère.
+                Inutile d'appairer la montre à Windows ; si elle l'est, choisis-la simplement dans la liste.
             </TextBlock>
 
             <!-- Sport -->
-            <TextBlock Text="MODE SPORT (NÉCESSAIRE POUR LE CARDIO EN CONTINU)" Style="{StaticResource Lbl}"/>
+            <TextBlock Text="MONTRES DA FIT : SPORT LANCÉ POUR AVOIR LE CARDIO EN CONTINU" Style="{StaticResource Lbl}"/>
             <StackPanel Orientation="Horizontal" Margin="0,2">
                 <TextBlock Text="Sport lancé :" Style="{StaticResource FieldName}"/>
                 <ComboBox x:Name="CmbSport" Width="200" DisplayMemberPath="Value" SelectedValuePath="Key"/>
@@ -163,6 +174,8 @@
                 <Run Text="StatusText"/><Run Text="         texte lisible" Foreground="#99FFFFFF"/><LineBreak/>
                 <Run Text="Battery"/><Run Text="            % (‑1 inconnu)" Foreground="#99FFFFFF"/><LineBreak/>
                 <Run Text="DeviceName"/><Run Text="         nom de la montre" Foreground="#99FFFFFF"/><LineBreak/>
+                <Run Text="Profile"/><Run Text="            type de montre" Foreground="#99FFFFFF"/><LineBreak/>
+                <Run Text="Reconnects"/><Run Text="         nb de reconnexions" Foreground="#99FFFFFF"/><LineBreak/>
                 <Run Text="UserMaxHeartRate"/><Run Text="   FC max réglée" Foreground="#99FFFFFF"/>
             </TextBlock>
             <TextBlock Text="ACTIONS" Style="{StaticResource Lbl}"/>

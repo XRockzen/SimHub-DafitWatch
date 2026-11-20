@@ -4,7 +4,6 @@ using System.Linq;
 using System.Threading;
 using System.Threading.Tasks;
 using Windows.Devices.Bluetooth;
-using Windows.Devices.Bluetooth.Advertisement;
 using Windows.Devices.Bluetooth.GenericAttributeProfile;
 
 namespace User.DafitWatch
@@ -15,50 +14,130 @@ namespace User.DafitWatch
         Searching,
         Connecting,
         WaitingHeartRate,
-        Streaming
+        Streaming,
+        Reconnecting
     }
 
-    public class ScanResult
+    /// <summary>Liaison perdue : on se reconnecte tout de suite, sans attendre.</summary>
+    class LinkLostException : Exception
     {
-        public ulong  Address     { get; set; }
-        public string AddressText { get { return WatchClient.FormatAddress(Address); } }
-        public BluetoothAddressType AddressType { get; set; }
-        public string Name        { get; set; }
-        public short  Rssi        { get; set; }
+        public LinkLostException(string message) : base(message) { }
+    }
 
-        public override string ToString()
+    /// <summary>
+    /// Une connexion GATT ouverte vers la montre (appareil, session, services en cache).
+    /// Tout est jeté et recréé à chaque reconnexion : après une coupure, Windows
+    /// invalide ces objets (« l'objet a été fermé »).
+    /// </summary>
+    public class WatchLink : IDisposable
+    {
+        public const int OpTimeoutMs = 10000;
+        public const int ConnectTimeoutMs = 20000;
+
+        public BluetoothLEDevice Device { get; private set; }
+        public GattSession Session { get; private set; }
+        readonly Dictionary<Guid, GattDeviceService> _services = new Dictionary<Guid, GattDeviceService>();
+        readonly Dictionary<Guid, GattCharacteristic> _chars = new Dictionary<Guid, GattCharacteristic>();
+
+        public ICollection<Guid> ServiceUuids { get { return _services.Keys; } }
+
+        public WatchLink(BluetoothLEDevice device)
         {
-            return string.Format("{0}  {1}  ({2} dBm)", AddressText, string.IsNullOrEmpty(Name) ? "?" : Name, Rssi);
+            Device = device;
+        }
+
+        public async Task Open(CancellationToken ct)
+        {
+            Session = await GattSession.FromDeviceIdAsync(Device.BluetoothDeviceId).AsTask(OpTimeoutMs, ct).ConfigureAwait(false);
+            if (Session != null) Session.MaintainConnection = true;   // Windows garde la liaison et la rétablit seul
+
+            // La première requête GATT déclenche la connexion radio : elle peut échouer
+            // le temps que la montre réponde.
+            for (int attempt = 1; ; attempt++)
+            {
+                // Établir la liaison radio peut prendre plus longtemps que les requêtes suivantes
+                var r = await Device.GetGattServicesAsync(BluetoothCacheMode.Uncached).AsTask(ConnectTimeoutMs, ct).ConfigureAwait(false);
+                if (r.Status == GattCommunicationStatus.Success)
+                {
+                    foreach (var s in r.Services)
+                        if (!_services.ContainsKey(s.Uuid)) _services[s.Uuid] = s; else s.Dispose();
+                    return;
+                }
+                if (attempt >= 4)
+                    throw new Exception("montre injoignable : hors de portée, en veille ou connectée à un autre appareil (téléphone ?)");
+                await Task.Delay(1500, ct).ConfigureAwait(false);
+            }
+        }
+
+        public async Task<GattCharacteristic> GetCharacteristic(Guid service, Guid characteristic, CancellationToken ct)
+        {
+            GattCharacteristic ch;
+            lock (_chars) if (_chars.TryGetValue(characteristic, out ch)) return ch;
+
+            GattDeviceService svc;
+            if (!_services.TryGetValue(service, out svc)) return null;
+            for (int attempt = 1; ; attempt++)
+            {
+                var r = await svc.GetCharacteristicsForUuidAsync(characteristic, BluetoothCacheMode.Uncached).AsTask(OpTimeoutMs, ct).ConfigureAwait(false);
+                if (r.Status == GattCommunicationStatus.Success)
+                {
+                    ch = r.Characteristics.FirstOrDefault();
+                    if (ch != null) lock (_chars) _chars[characteristic] = ch;
+                    return ch;
+                }
+                if (attempt >= 3) throw new LinkLostException("caractéristique " + Short(characteristic) + " injoignable (" + r.Status + ")");
+                await Task.Delay(500, ct).ConfigureAwait(false);
+            }
+        }
+
+        public async Task Subscribe(GattCharacteristic ch, bool enable, CancellationToken ct)
+        {
+            var value = !enable ? GattClientCharacteristicConfigurationDescriptorValue.None
+                      : ch.CharacteristicProperties.HasFlag(GattCharacteristicProperties.Notify)
+                            ? GattClientCharacteristicConfigurationDescriptorValue.Notify
+                            : GattClientCharacteristicConfigurationDescriptorValue.Indicate;
+            var status = await ch.WriteClientCharacteristicConfigurationDescriptorAsync(value).AsTask(OpTimeoutMs, ct).ConfigureAwait(false);
+            if (status != GattCommunicationStatus.Success)
+                throw new LinkLostException("abonnement " + Short(ch.Uuid) + " refusé (" + status + ")");
+        }
+
+        public static string Short(Guid uuid)
+        {
+            var s = uuid.ToString();
+            return s.EndsWith("-0000-1000-8000-00805f9b34fb") ? s.Substring(4, 4).ToUpperInvariant() : s;
+        }
+
+        public void Dispose()
+        {
+            foreach (var s in _services.Values) { try { s.Dispose(); } catch { } }
+            _services.Clear();
+            lock (_chars) _chars.Clear();
+            if (Session != null) { try { Session.MaintainConnection = false; Session.Dispose(); } catch { } }
+            if (Device != null) { try { Device.Dispose(); } catch { } }
+            Session = null;
+            Device = null;
         }
     }
 
     /// <summary>
-    /// Connexion BLE à une montre Da Fit (protocole MoYoung) :
-    /// démarre un sport à distance (CMD 0x68) puis lit le rythme cardiaque
-    /// sur le service standard Heart Rate (0x180D / 0x2A37). Se reconnecte tout seul.
+    /// Connexion BLE à une montre ou une ceinture cardio, avec reconnexion automatique.
+    /// Le cardio est lu sur le service standard Heart Rate (0x180D / 0x2A37) ;
+    /// le profil de la montre (<see cref="WatchProfile"/>) se charge de le faire diffuser.
     /// </summary>
     public class WatchClient
     {
-        static readonly Guid SvcHeartRate  = GattServiceUuids.HeartRate;
-        static readonly Guid ChHrMeasure   = GattCharacteristicUuids.HeartRateMeasurement;
-        static readonly Guid SvcBattery    = GattServiceUuids.Battery;
-        static readonly Guid ChBattery     = GattCharacteristicUuids.BatteryLevel;
-        static readonly Guid SvcMoyoung    = new Guid("0000feea-0000-1000-8000-00805f9b34fb");
-        static readonly Guid ChMoyoungOut  = new Guid("0000fee2-0000-1000-8000-00805f9b34fb");
+        static readonly Guid SvcHeartRate = GattServiceUuids.HeartRate;
+        static readonly Guid ChHrMeasure  = GattCharacteristicUuids.HeartRateMeasurement;
+        static readonly Guid SvcBattery   = GattServiceUuids.Battery;
+        static readonly Guid ChBattery    = GattCharacteristicUuids.BatteryLevel;
 
-        const byte CmdStartStopSport = 0x68;   // CMD_START_STOP_MEASURE_DYNAMIC_RATE (Gadgetbridge)
-        const byte SportStop         = 0xFF;
+        const int SearchTimeoutMs   = 15000;
+        const int NoDataResyncSec   = 12;   // plus rien sur 2A37 -> on relance la diffusion
+        const int MaxResyncs        = 3;    // puis on se reconnecte complètement
+        const int DisconnectGraceMs = 4000; // coupure radio tolérée (Windows se reconnecte seul)
+        const int MaxRetryDelayMs   = 10000;
 
-        const int SearchTimeoutMs     = 15000;
-        const int RetryDelayMs        = 5000;
-        const int NoDataRestartSec    = 20;   // plus rien sur 2A37 -> on relance le sport
-        const int MaxSportRestarts    = 3;    // puis on se reconnecte complètement
-
-        // --- Réglages (copiés au Start) ---
-        string _targetAddress;
-        string _targetName;
-        byte   _sportType;
-        bool   _stopSportOnExit;
+        DafitWatchSettings _settings;
 
         // --- État publié (lu par le plugin depuis d'autres threads) ---
         readonly object _lock = new object();
@@ -70,27 +149,34 @@ namespace User.DafitWatch
         string   _statusText = "Arrêté";
         string   _deviceName = "";
         string   _deviceAddress = "";
+        string   _profileName = "";
+        int      _reconnects;
 
-        /// <summary>Déclenché à chaque mesure valide (bpm &gt; 0), sur un thread BLE.</summary>
+        /// <summary>Déclenché à chaque mesure valide (bpm &gt; 0), sur un thread du pool.</summary>
         public event Action<int> HeartRateReceived;
 
         // --- Connexion courante ---
         CancellationTokenSource _cts;
         Task _loop;
-        BluetoothLEDevice _device;
-        GattSession _session;
-        readonly List<GattDeviceService> _services = new List<GattDeviceService>();
+        WatchLink _link;
+        WatchProfile _profile;
         GattCharacteristic _hrChar;
         GattCharacteristic _batteryChar;
-        GattCharacteristic _writeChar;
+        volatile bool _linkClosed;
+        volatile bool _resubscribeNeeded;
+        volatile bool _weStarted;   // le plugin a lancé la diffusion (sport) pendant cette session
+        DateTime _disconnectedSinceUtc = DateTime.MinValue;
 
         public int HeartRate              { get { lock (_lock) return _heartRate; } }
         public DateTime LastValidHrUtc    { get { lock (_lock) return _lastValidHrUtc; } }
+        DateTime LastHrPacketUtc          { get { lock (_lock) return _lastHrPacketUtc; } }
         public int Battery                { get { lock (_lock) return _battery; } }
         public WatchState State           { get { lock (_lock) return _state; } }
         public string StatusText          { get { lock (_lock) return _statusText; } }
         public string DeviceName          { get { lock (_lock) return _deviceName; } }
         public string DeviceAddress       { get { lock (_lock) return _deviceAddress; } }
+        public string ProfileName         { get { lock (_lock) return _profileName; } }
+        public int Reconnects             { get { lock (_lock) return _reconnects; } }
         public bool IsRunning             { get { return _loop != null; } }
 
         // ------------------------------------------------------------------ cycle de vie
@@ -98,17 +184,13 @@ namespace User.DafitWatch
         public void Start(DafitWatchSettings settings)
         {
             if (_loop != null) return;
-            _targetAddress   = (settings.DeviceAddress ?? "").Trim();
-            _targetName      = (settings.DeviceName ?? "").Trim();
-            _sportType       = (byte)Math.Max(0, Math.Min(254, settings.SportType));
-            _stopSportOnExit = settings.StopSportOnExit;
-
+            _settings = settings;
             _cts = new CancellationTokenSource();
             var token = _cts.Token;
             _loop = Task.Run(() => RunLoop(token));
         }
 
-        /// <summary>Arrête proprement (envoie l'arrêt du sport si demandé). Bloque au plus ~6 s.</summary>
+        /// <summary>Arrête proprement (le profil arrête la diffusion si demandé). Bloque au plus ~6 s.</summary>
         public void Stop()
         {
             if (_loop == null) return;
@@ -122,202 +204,299 @@ namespace User.DafitWatch
 
         async Task RunLoop(CancellationToken ct)
         {
+            int failures = 0;
             while (!ct.IsCancellationRequested)
             {
                 try
                 {
-                    await ConnectAndStream(ct);
+                    await ConnectAndStream(ct).ConfigureAwait(false);
                 }
                 catch (OperationCanceledException) { }
                 catch (Exception ex)
                 {
-                    Log("Erreur : " + ex.Message);
-                    SetStatus("Erreur : " + ex.Message);
+                    var msg = WinRtInterop.Describe(ex);
+                    Log("connexion interrompue : " + msg);
+                    SetState(WatchState.Reconnecting, "Reconnexion… (" + msg + ")");
                 }
-                // (C# 5 : pas d'await dans un finally)
-                try { await Cleanup(ct.IsCancellationRequested && _stopSportOnExit); }
-                catch (Exception ex) { Log("nettoyage : " + ex.Message); }
+                // Coupure en pleine mesure : on retente tout de suite
+                bool streamed = LastValidHrUtc > DateTime.UtcNow.AddSeconds(-30);
+
+                try { await Cleanup(ct.IsCancellationRequested).ConfigureAwait(false); }
+                catch (Exception ex) { Log("nettoyage : " + WinRtInterop.Describe(ex)); }
 
                 if (ct.IsCancellationRequested) break;
-                try { await Task.Delay(RetryDelayMs, ct); } catch (OperationCanceledException) { }
+                lock (_lock) _reconnects++;
+
+                // Reconnexion immédiate après une coupure en pleine mesure, puis de plus en plus espacée
+                failures = streamed ? 0 : failures + 1;
+                int delay = failures == 0 ? 500 : Math.Min(MaxRetryDelayMs, 1000 << Math.Min(failures - 1, 4));
+                try { await Task.Delay(delay, ct).ConfigureAwait(false); } catch (OperationCanceledException) { }
             }
         }
 
         // ------------------------------------------------------------------ connexion
 
-        async Task ConnectAndStream(CancellationToken ct)
+        /// <summary>Renvoie faux si la montre n'a pas été trouvée ; sinon ne se termine que par une exception.</summary>
+        async Task<bool> ConnectAndStream(CancellationToken ct)
         {
-            SetState(WatchState.Searching, "Recherche de la montre…");
-            var found = await FindWatch(ct);
-            if (found == null)
-            {
-                SetStatus("Montre introuvable — est-elle connectée au téléphone ?");
-                return;
-            }
+            var device = await OpenDevice(ct).ConfigureAwait(false);
+            if (device == null) return false;
 
-            SetState(WatchState.Connecting, "Connexion à " + found + "…");
-            _device = await BluetoothLEDevice.FromBluetoothAddressAsync(found.Address, found.AddressType).AsTask();
-            if (_device == null) throw new Exception("connexion refusée par Windows");
-            lock (_lock)
-            {
-                _deviceName = string.IsNullOrEmpty(_device.Name) ? found.Name : _device.Name;
-                _deviceAddress = found.AddressText;
-            }
+            _linkClosed = false;
+            _resubscribeNeeded = false;
+            _disconnectedSinceUtc = DateTime.MinValue;
+            _link = new WatchLink(device);
+            device.ConnectionStatusChanged += OnConnectionStatusChanged;
 
-            // Garde la liaison ouverte même entre deux requêtes GATT
-            _session = await GattSession.FromDeviceIdAsync(_device.BluetoothDeviceId).AsTask();
-            if (_session != null) _session.MaintainConnection = true;
+            SetState(WatchState.Connecting, "Connexion à " + DeviceName + "…");
+            await _link.Open(ct).ConfigureAwait(false);
+            if (_link.Session != null) _link.Session.SessionStatusChanged += OnSessionStatusChanged;
 
-            _hrChar = await GetCharacteristic(SvcHeartRate, ChHrMeasure, ct);
-            if (_hrChar == null) throw new Exception("service cardiaque introuvable");
-            _writeChar = await GetCharacteristic(SvcMoyoung, ChMoyoungOut, ct);
-            if (_writeChar == null) throw new Exception("service Da Fit (FEEA) introuvable");
-            _batteryChar = await GetCharacteristic(SvcBattery, ChBattery, ct);
+            if (!_link.ServiceUuids.Contains(SvcHeartRate))
+                throw new Exception("cet appareil n'expose pas le service cardio standard (0x180D)");
 
+            _profile = WatchProfiles.Resolve(_settings.Profile, _link.ServiceUuids);
+            lock (_lock) _profileName = _profile.DisplayName;
+
+            _hrChar = await _link.GetCharacteristic(SvcHeartRate, ChHrMeasure, ct).ConfigureAwait(false);
+            if (_hrChar == null) throw new Exception("caractéristique cardio (0x2A37) introuvable");
             _hrChar.ValueChanged += OnHeartRate;
-            var status = await _hrChar.WriteClientCharacteristicConfigurationDescriptorAsync(
-                GattClientCharacteristicConfigurationDescriptorValue.Notify).AsTask();
-            if (status != GattCommunicationStatus.Success)
-                throw new Exception("abonnement au rythme cardiaque refusé (" + status + ")");
+            var subscribedAt = DateTime.UtcNow;
+            await _link.Subscribe(_hrChar, true, ct).ConfigureAwait(false);
+            await _profile.Attach(_link, ct).ConfigureAwait(false);
+            Log("connectée à " + DeviceName + " (" + DeviceAddress + "), profil " + _profile.DisplayName);
 
-            if (_batteryChar != null)
+            // Sport déjà lancé (à la main, ou par une session précédente) : on ne touche à rien.
+            // Renvoyer un démarrage à une montre Da Fit déjà en sport peut l'interrompre.
+            SetState(WatchState.WaitingHeartRate, "Connectée — écoute du cardio…");
+            for (int i = 0; i < 20 && LastHrPacketUtc < subscribedAt; i++)
+                await Task.Delay(200, ct).ConfigureAwait(false);
+            if (LastHrPacketUtc >= subscribedAt)
             {
-                _batteryChar.ValueChanged += OnBattery;
-                try
-                {
-                    var read = await _batteryChar.ReadValueAsync(BluetoothCacheMode.Uncached).AsTask();
-                    if (read.Status == GattCommunicationStatus.Success)
-                        UpdateBattery(WinRtInterop.ToBytes(read.Value));
-                    await _batteryChar.WriteClientCharacteristicConfigurationDescriptorAsync(
-                        GattClientCharacteristicConfigurationDescriptorValue.Notify).AsTask();
-                }
-                catch (Exception ex) { Log("batterie : " + ex.Message); }
+                Log("la montre diffuse déjà le cardio");
             }
+            else
+            {
+                Log("démarrage de la diffusion (" + _profile.DisplayName + ")");
+                await _profile.Start(_link, _settings, ct).ConfigureAwait(false);
+                _weStarted = true;
+                SetState(WatchState.WaitingHeartRate, "Connectée — démarrage du capteur…");
+            }
+            lock (_lock) if (_lastHrPacketUtc < subscribedAt) _lastHrPacketUtc = DateTime.UtcNow;
 
-            lock (_lock) _lastHrPacketUtc = DateTime.UtcNow;
-            await StartSport();
-            SetState(WatchState.WaitingHeartRate, "Connectée — démarrage du capteur…");
-            Log("connectée à " + DeviceName + " (" + DeviceAddress + ")");
+            // La batterie est accessoire : lue en parallèle, elle ne retarde jamais le cardio
+            var link = _link;
+            var unused = Task.Run(() => SetupBattery(link, ct));
 
-            int restarts = 0;
+            await Monitor(ct).ConfigureAwait(false);
+            return true;
+        }
+
+        /// <summary>Surveille la liaison ; ne se termine que par une exception (coupure, annulation).</summary>
+        async Task Monitor(CancellationToken ct)
+        {
+            int resyncs = 0;
+            var lastResync = DateTime.UtcNow;
+
             while (true)
             {
-                await Task.Delay(1000, ct);
+                await Task.Delay(500, ct).ConfigureAwait(false);
+                var now = DateTime.UtcNow;
+
+                if (_linkClosed)
+                    throw new LinkLostException("session Bluetooth fermée par Windows");
+                if (_disconnectedSinceUtc != DateTime.MinValue &&
+                    (now - _disconnectedSinceUtc).TotalMilliseconds > DisconnectGraceMs)
+                    throw new LinkLostException("montre déconnectée");
 
                 DateTime lastPacket, lastValid;
                 lock (_lock) { lastPacket = _lastHrPacketUtc; lastValid = _lastValidHrUtc; }
-                var now = DateTime.UtcNow;
 
                 if ((now - lastValid).TotalSeconds < 5)
                 {
-                    restarts = 0;
+                    resyncs = 0;
                     SetState(WatchState.Streaming, "Connectée — " + HeartRate + " bpm");
+                }
+                else if (_disconnectedSinceUtc != DateTime.MinValue)
+                {
+                    SetState(WatchState.Reconnecting, "Liaison coupée, reconnexion…");
                 }
                 else if ((now - lastPacket).TotalSeconds < 5)
                 {
                     SetState(WatchState.WaitingHeartRate, "Connectée — capteur en stabilisation…");
                 }
 
-                if ((now - lastPacket).TotalSeconds > NoDataRestartSec)
+                if (_disconnectedSinceUtc != DateTime.MinValue) continue;
+
+                // La radio est revenue d'elle-même : l'abonnement est perdu pour un appareil non appairé.
+                // On se réabonne, puis on laisse au cardio le temps de revenir avant toute relance.
+                if (_resubscribeNeeded)
                 {
-                    if (++restarts > MaxSportRestarts)
-                        throw new Exception("plus de données de la montre");
-                    Log("aucune donnée depuis " + NoDataRestartSec + " s, relance du sport (" + restarts + ")");
-                    SetState(WatchState.WaitingHeartRate, "Relance du sport sur la montre…");
-                    await StartSport();
-                    lock (_lock) _lastHrPacketUtc = DateTime.UtcNow;
+                    _resubscribeNeeded = false;
+                    lastResync = now;
+                    Log("liaison rétablie, réabonnement au cardio");
+                    await _link.Subscribe(_hrChar, true, ct).ConfigureAwait(false);
+                    continue;
+                }
+
+                // Plus rien depuis un moment (sport arrêté sur la montre…) : on relance la diffusion
+                if ((now - lastPacket).TotalSeconds > NoDataResyncSec && (now - lastResync).TotalSeconds > NoDataResyncSec)
+                {
+                    if (++resyncs > MaxResyncs)
+                        throw new LinkLostException("plus de données de la montre");
+                    Log("aucune donnée depuis " + NoDataResyncSec + " s, relance (" + resyncs + ")");
+                    lastResync = now;
+                    SetState(WatchState.WaitingHeartRate, "Relance de la mesure…");
+                    await _profile.Resync(_link, _settings, ct).ConfigureAwait(false);
+                    _weStarted = true;
                 }
             }
         }
 
-        Task StartSport()
+        async Task SetupBattery(WatchLink link, CancellationToken ct)
         {
-            return SendMoyoung(CmdStartStopSport, new[] { _sportType });
-        }
-
-        async Task SendMoyoung(byte cmd, byte[] payload)
-        {
-            var w = _writeChar;
-            if (w == null) return;
-            int len = payload.Length + 5;
-            var packet = new byte[len];
-            packet[0] = 0xFE;
-            packet[1] = 0xEA;
-            packet[2] = (byte)(0x20 + (len >> 8));   // en-tête MoYoung pour MTU > 20
-            packet[3] = (byte)(len & 0xFF);
-            packet[4] = cmd;
-            Array.Copy(payload, 0, packet, 5, payload.Length);
-            await w.WriteValueAsync(WinRtInterop.ToBuffer(packet), GattWriteOption.WriteWithoutResponse).AsTask();
-        }
-
-        async Task<GattCharacteristic> GetCharacteristic(Guid service, Guid characteristic, CancellationToken ct)
-        {
-            for (int attempt = 0; attempt < 5; attempt++)
+            try
             {
-                var sr = await _device.GetGattServicesForUuidAsync(service, BluetoothCacheMode.Uncached).AsTask();
-                if (sr.Status == GattCommunicationStatus.Success)
+                if (!link.ServiceUuids.Contains(SvcBattery)) return;
+                var ch = await link.GetCharacteristic(SvcBattery, ChBattery, ct).ConfigureAwait(false);
+                if (ch == null || link != _link) return;
+                if (ch.CharacteristicProperties.HasFlag(GattCharacteristicProperties.Notify))
                 {
-                    if (sr.Services.Count == 0) return null;
-                    var svc = sr.Services[0];
-                    lock (_services) _services.Add(svc);
-                    var cr = await svc.GetCharacteristicsForUuidAsync(characteristic, BluetoothCacheMode.Uncached).AsTask();
-                    if (cr.Status == GattCommunicationStatus.Success && cr.Characteristics.Count > 0)
-                        return cr.Characteristics[0];
+                    ch.ValueChanged += OnBattery;
+                    _batteryChar = ch;
+                    await link.Subscribe(ch, true, ct).ConfigureAwait(false);
                 }
-                await Task.Delay(1000, ct);
+                var read = await ch.ReadValueAsync(BluetoothCacheMode.Uncached).AsTask(WatchLink.OpTimeoutMs, ct).ConfigureAwait(false);
+                if (read.Status == GattCommunicationStatus.Success)
+                    UpdateBattery(WinRtInterop.ToBytes(read.Value));
             }
-            throw new Exception("montre injoignable (service " + service.ToString().Substring(4, 4) + ")");
+            catch (OperationCanceledException) { }
+            catch (Exception ex) { Log("batterie : " + WinRtInterop.Describe(ex)); }
         }
 
-        async Task Cleanup(bool sendStop)
+        /// <summary>Retrouve la montre : directement par adresse (appareil appairé ou déjà vu), sinon par recherche.</summary>
+        async Task<BluetoothLEDevice> OpenDevice(CancellationToken ct)
         {
-            if (sendStop && _writeChar != null)
+            ulong address;
+            bool byAddress = BluetoothTools.TryParseAddress(_settings.DeviceAddress, out address);
+            string name = (_settings.DeviceName ?? "").Trim();
+            if (!byAddress && name.Length == 0)
+            {
+                SetState(WatchState.Stopped, "Aucune montre choisie — choisis-la dans la liste ci-dessous");
+                return null;
+            }
+
+            if (byAddress)
+            {
+                lock (_lock) _deviceAddress = BluetoothTools.FormatAddress(address);
+                SetState(WatchState.Connecting, "Connexion à " + _deviceAddress + "…");
+                // Pas besoin d'annonce Bluetooth : Windows se connecte à l'adresse
+                var dev = await BluetoothLEDevice.FromBluetoothAddressAsync(address).AsTask(WatchLink.OpTimeoutMs, ct).ConfigureAwait(false);
+                if (dev != null)
+                {
+                    lock (_lock) _deviceName = string.IsNullOrEmpty(dev.Name) ? name : dev.Name;
+                    return dev;
+                }
+            }
+
+            // Appareil inconnu de Windows (adresse aléatoire, jamais vu) : on écoute les annonces
+            SetState(WatchState.Searching, "Recherche de la montre…");
+            var found = (await BluetoothTools.Scan(SearchTimeoutMs, ct, r => Match(r, byAddress, address, name)).ConfigureAwait(false))
+                        .FirstOrDefault(r => Match(r, byAddress, address, name));
+            if (found == null)
+            {
+                SetState(WatchState.Searching, "Montre introuvable — allumée, à portée, et pas connectée au téléphone ?");
+                return null;
+            }
+
+            lock (_lock)
+            {
+                _deviceAddress = found.AddressText;
+                _deviceName = string.IsNullOrEmpty(found.Name) ? name : found.Name;
+            }
+            return await BluetoothLEDevice.FromBluetoothAddressAsync(found.Address, found.AddressType).AsTask(WatchLink.OpTimeoutMs, ct).ConfigureAwait(false);
+        }
+
+        static bool Match(ScanResult r, bool byAddress, ulong address, string name)
+        {
+            return byAddress ? r.Address == address : string.Equals(r.Name, name, StringComparison.OrdinalIgnoreCase);
+        }
+
+        async Task Cleanup(bool stopping)
+        {
+            var link = _link;
+            if (link == null) return;
+
+            // On n'arrête que ce que le plugin a lancé : un sport démarré à la main reste actif
+            if (stopping && _weStarted && _profile != null && !_linkClosed)
             {
                 try
                 {
-                    await WithTimeout(SendMoyoung(CmdStartStopSport, new[] { SportStop }), 2000);
-                    Log("sport arrêté sur la montre");
+                    await WithTimeout(_profile.Stop(link, _settings), 2000).ConfigureAwait(false);
+                    Log("diffusion arrêtée sur la montre");
                 }
-                catch (Exception ex) { Log("arrêt du sport : " + ex.Message); }
+                catch (Exception ex) { Log("arrêt : " + WinRtInterop.Describe(ex)); }
             }
 
             if (_hrChar != null)
             {
                 _hrChar.ValueChanged -= OnHeartRate;
-                try
+                if (stopping && !_linkClosed)
                 {
-                    await WithTimeout(_hrChar.WriteClientCharacteristicConfigurationDescriptorAsync(
-                        GattClientCharacteristicConfigurationDescriptorValue.None).AsTask(), 1500);
+                    try { await WithTimeout(link.Subscribe(_hrChar, false, CancellationToken.None), 1500).ConfigureAwait(false); }
+                    catch { }
                 }
-                catch { }
             }
             if (_batteryChar != null) _batteryChar.ValueChanged -= OnBattery;
+            if (link.Device != null) link.Device.ConnectionStatusChanged -= OnConnectionStatusChanged;
+            if (link.Session != null) link.Session.SessionStatusChanged -= OnSessionStatusChanged;
 
-            lock (_services)
-            {
-                foreach (var s in _services) { try { s.Dispose(); } catch { } }
-                _services.Clear();
-            }
-            if (_session != null) { try { _session.Dispose(); } catch { } }
-            if (_device != null) { try { _device.Dispose(); } catch { } }
-
-            _hrChar = null; _batteryChar = null; _writeChar = null;
-            _session = null; _device = null;
+            link.Dispose();
+            _link = null;
+            _hrChar = null;
+            _batteryChar = null;
+            _profile = null;
             lock (_lock) { _heartRate = 0; }
         }
 
         static async Task WithTimeout(Task task, int ms)
         {
-            if (await Task.WhenAny(task, Task.Delay(ms)) != task)
+            if (await Task.WhenAny(task, Task.Delay(ms)).ConfigureAwait(false) != task)
                 throw new TimeoutException("délai dépassé");
-            await task;
+            await task.ConfigureAwait(false);
         }
 
-        // ------------------------------------------------------------------ notifications
+        // ------------------------------------------------------------------ événements Bluetooth
+
+        void OnConnectionStatusChanged(BluetoothLEDevice sender, object args)
+        {
+            if (sender.ConnectionStatus == BluetoothConnectionStatus.Disconnected)
+            {
+                if (_disconnectedSinceUtc == DateTime.MinValue) _disconnectedSinceUtc = DateTime.UtcNow;
+                Log("radio : déconnectée");
+            }
+            else
+            {
+                if (_disconnectedSinceUtc != DateTime.MinValue) _resubscribeNeeded = true;
+                _disconnectedSinceUtc = DateTime.MinValue;
+                Log("radio : connectée");
+            }
+        }
+
+        void OnSessionStatusChanged(GattSession sender, GattSessionStatusChangedEventArgs args)
+        {
+            if (args.Status == GattSessionStatus.Closed)
+            {
+                _linkClosed = true;
+                Log("session GATT fermée (" + args.Error + ")");
+            }
+        }
 
         void OnHeartRate(GattCharacteristic sender, GattValueChangedEventArgs args)
         {
-            var b = WinRtInterop.ToBytes(args.CharacteristicValue);
+            byte[] b;
+            try { b = WinRtInterop.ToBytes(args.CharacteristicValue); }
+            catch { return; }
             if (b.Length < 2) return;
             int bpm = (b[0] & 0x01) != 0 && b.Length >= 3 ? b[1] | (b[2] << 8) : b[1];
             var now = DateTime.UtcNow;
@@ -325,19 +504,19 @@ namespace User.DafitWatch
             lock (_lock)
             {
                 _lastHrPacketUtc = now;
-                // 0 = capteur en cours de stabilisation après le démarrage du sport
+                // 0 = capteur en cours de stabilisation après le démarrage de la mesure
                 if (bpm <= 0 || bpm > 250) return;
                 _heartRate = bpm;
                 _lastValidHrUtc = now;
             }
 
             var handler = HeartRateReceived;
-            if (handler != null) handler(bpm);
+            if (handler != null) ThreadPool.QueueUserWorkItem(_ => handler(bpm));
         }
 
         void OnBattery(GattCharacteristic sender, GattValueChangedEventArgs args)
         {
-            UpdateBattery(WinRtInterop.ToBytes(args.CharacteristicValue));
+            try { UpdateBattery(WinRtInterop.ToBytes(args.CharacteristicValue)); } catch { }
         }
 
         void UpdateBattery(byte[] b)
@@ -345,91 +524,14 @@ namespace User.DafitWatch
             if (b.Length > 0) lock (_lock) _battery = b[0];
         }
 
-        // ------------------------------------------------------------------ recherche
-
-        async Task<ScanResult> FindWatch(CancellationToken ct)
-        {
-            ulong wanted = 0;
-            bool byAddress = TryParseAddress(_targetAddress, out wanted);
-            string name = _targetName;
-            if (!byAddress && string.IsNullOrEmpty(name))
-                throw new Exception("ni adresse ni nom de montre configurés");
-
-            var results = await Scan(SearchTimeoutMs, ct, r =>
-                byAddress ? r.Address == wanted
-                          : string.Equals(r.Name, name, StringComparison.OrdinalIgnoreCase));
-            return results.FirstOrDefault(r =>
-                byAddress ? r.Address == wanted
-                          : string.Equals(r.Name, name, StringComparison.OrdinalIgnoreCase));
-        }
-
-        /// <summary>
-        /// Écoute les annonces BLE. S'arrête au bout de <paramref name="timeoutMs"/>
-        /// ou dès qu'un appareil satisfait <paramref name="stopWhen"/>.
-        /// </summary>
-        public static async Task<List<ScanResult>> Scan(int timeoutMs, CancellationToken ct, Func<ScanResult, bool> stopWhen)
-        {
-            var seen = new Dictionary<ulong, ScanResult>();
-            var done = new TaskCompletionSource<bool>();
-            var watcher = new BluetoothLEAdvertisementWatcher { ScanningMode = BluetoothLEScanningMode.Active };
-
-            watcher.Received += (w, e) =>
-            {
-                lock (seen)
-                {
-                    ScanResult r;
-                    if (!seen.TryGetValue(e.BluetoothAddress, out r))
-                    {
-                        r = new ScanResult { Address = e.BluetoothAddress };
-                        seen[e.BluetoothAddress] = r;
-                    }
-                    r.AddressType = e.BluetoothAddressType;
-                    r.Rssi = e.RawSignalStrengthInDBm;
-                    if (!string.IsNullOrEmpty(e.Advertisement.LocalName)) r.Name = e.Advertisement.LocalName;
-                    if (stopWhen != null && stopWhen(r)) done.TrySetResult(true);
-                }
-            };
-            watcher.Stopped += (w, e) => done.TrySetResult(false);
-
-            watcher.Start();
-            using (ct.Register(() => done.TrySetCanceled()))
-            {
-                try { await Task.WhenAny(done.Task, Task.Delay(timeoutMs)); }
-                finally { watcher.Stop(); }
-            }
-            ct.ThrowIfCancellationRequested();
-
-            lock (seen) return seen.Values.OrderByDescending(r => r.Rssi).ToList();
-        }
-
         // ------------------------------------------------------------------ utilitaires
-
-        public static string FormatAddress(ulong a)
-        {
-            var bytes = BitConverter.GetBytes(a);
-            return string.Format("{0:X2}:{1:X2}:{2:X2}:{3:X2}:{4:X2}:{5:X2}",
-                bytes[5], bytes[4], bytes[3], bytes[2], bytes[1], bytes[0]);
-        }
-
-        public static bool TryParseAddress(string text, out ulong address)
-        {
-            address = 0;
-            if (string.IsNullOrWhiteSpace(text)) return false;
-            var hex = text.Replace(":", "").Replace("-", "").Trim();
-            return hex.Length == 12 && ulong.TryParse(hex, System.Globalization.NumberStyles.HexNumber, null, out address);
-        }
 
         void SetState(WatchState state, string text)
         {
             lock (_lock) { _state = state; _statusText = text; }
         }
 
-        void SetStatus(string text)
-        {
-            lock (_lock) _statusText = text;
-        }
-
-        static void Log(string msg)
+        internal static void Log(string msg)
         {
             SimHub.Logging.Current.Info("[DafitWatch] " + msg);
         }

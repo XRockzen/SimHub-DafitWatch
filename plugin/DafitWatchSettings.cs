@@ -5,16 +5,19 @@ namespace User.DafitWatch
         /// <summary>Adresse Bluetooth (ex. AA:BB:CC:DD:EE:FF). Vide = recherche par nom.</summary>
         public string DeviceAddress { get; set; }
 
-        /// <summary>Nom Bluetooth annoncé par la montre (utilisé si l'adresse est vide).</summary>
+        /// <summary>Nom Bluetooth de la montre (affichage, et recherche si l'adresse est vide).</summary>
         public string DeviceName { get; set; }
+
+        /// <summary>Profil de montre : "auto", "standard" ou "dafit" (voir WatchProfiles).</summary>
+        public string Profile { get; set; }
 
         /// <summary>Connexion automatique au démarrage de SimHub.</summary>
         public bool AutoConnect { get; set; }
 
-        /// <summary>Type de sport lancé sur la montre (codes MoYoung : 17 = vélo d'intérieur).</summary>
+        /// <summary>Da Fit : type de sport lancé sur la montre (codes MoYoung : 17 = vélo d'intérieur).</summary>
         public int SportType { get; set; }
 
-        /// <summary>Arrête le sport sur la montre quand SimHub se ferme.</summary>
+        /// <summary>Da Fit : arrête le sport sur la montre quand SimHub se ferme.</summary>
         public bool StopSportOnExit { get; set; }
 
         /// <summary>Fréquence cardiaque maximale, pour le % et les zones.</summary>
@@ -26,7 +29,8 @@ namespace User.DafitWatch
         public DafitWatchSettings()
         {
             DeviceAddress    = "";
-            DeviceName       = "H33";
+            DeviceName       = "";
+            Profile          = WatchProfiles.AutoId;
             AutoConnect      = true;
             SportType        = 17;
             StopSportOnExit  = true;
